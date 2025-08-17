@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket         = "stagebucket12"
-    key            = "stage-eks4/terraform.tfstate"
+    key            = "stage-eks1/terraform.tfstate"
     region         = "us-west-2"
     dynamodb_table = "terraform-lock"
     encrypt        = true
@@ -190,7 +190,7 @@ resource "aws_eks_node_group" "stage_eks_node_group" {
     min_size     = var.node_min_capacity
   }
 
-  instance_types = ["t2.large"] 
+  instance_types = ["t3.micro"] 
 
   remote_access {
     ec2_ssh_key = aws_key_pair.ssh_key.key_name
