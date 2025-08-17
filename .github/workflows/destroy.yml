@@ -1,12 +1,11 @@
 name: soalr system workflow
-
 on:
     workflow_dispatch:
     push:
        branches:
             - feature-brancheA
             - main
-            
+
 jobs:
     terraform:
         name: terraform deployment
