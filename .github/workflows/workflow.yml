@@ -5,11 +5,12 @@ on:
   push:
     branches:
       - feature-branch
-      - main  
+      - main
+
 env:
-  MONGO_PASSWORD: ${{secrets.MONGO_PASSWORD}}
-  MONGO_USERNAME: ${{vars.MONGO_USERNAME}}
-  MONGO_URI: ${{vars.MONGO_URI}}
+  MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+  MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
+  MONGO_URI: ${{ vars.MONGO_URI }}
 
 jobs:
   unit-testing:
@@ -20,7 +21,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         exclude:
           - nodejs_version: 18
-            os: macos-latest  # properly paired exclusions
+            os: macos-latest
 
     runs-on: ${{ matrix.os }}
 
@@ -37,4 +38,61 @@ jobs:
         run: npm install
 
       - name: Run unit tests
+        id: hamada
         run: npm test
+
+      - name: Archive test results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: test-results
+          path: test-result.xml
+
+  code-coverage:
+    name: Code Coverage
+    needs: unit-testing
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4.4.0
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run coverage
+        run: npm run coverage
+
+      - name: Archive coverage results
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: code-coverage-result
+          path: coverage/
+          retention-days: 5
+  docker:
+    name: containerization
+    needs: [unit-testing, code-coverage] 
+    permissions: 
+      packages: write
+    runs-on: ubuntu_latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v5
+
+      - name:  docker login
+        uses: docker/login-action@v3.5.0
+        with:  
+            username: ${{ vars.DOCKERHUB_USERNAME }}
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: ghcr login
+        uses: docker/login-action@v3.5.0 
+        with:
+          registry: ghcr.io
+          username: ${{github.repository_owner}} 
+          passowrd: ${{secrets.github_token}}
+
