@@ -95,4 +95,22 @@ jobs:
           registry: ghcr.io
           username: ${{github.repository_owner}} 
           passowrd: ${{secrets.github_token}}
+      - name: build docker file
+        uses: docker/build-push-action@v6
+        with:
+            push: false 
+            tags: ${{vars.DOCKERHUB_USERNAME}}/solar-system/:${{github.workflow.sha}}
 
+      - name: test docker iamge
+        run: |
+            docker images
+            docker run --name solar-system -d \
+            -p 3000:3000 \
+            -e MONGO_URI=$MONGO_URI \
+            -e MONGO_USERNAME=$MONGO_USERNAME \
+            -e MONGO_PASSWORD+$MONGO_PASSWORD
+            ${{vars.DOCKERHUB_USERNAME}}/solar-system/:${{github.workflow.sha}}
+            export IP=$(docker inspect -f '{{raneg .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'solar-system)
+            echo $IP 
+            echo testing iamge
+            wget -q -O -127.0.0.1 :3000/live | grep live
