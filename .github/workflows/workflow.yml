@@ -50,8 +50,8 @@ jobs:
 
   code-coverage:
     name: Code Coverage
-    needs: unit-testing
     continue-on-error: true
+    needs: unit-testing
     runs-on: ubuntu-latest
 
     steps:
@@ -75,43 +75,56 @@ jobs:
           name: code-coverage-result
           path: coverage/
           retention-days: 5
+
   docker:
-    name: containerization
-    needs: [unit-testing, code-coverage] 
-    permissions: 
+    name: Containerization
+    needs: [unit-testing, code-coverage]
+    permissions:
       packages: write
-    runs-on: ubuntu_latest
+    runs-on: ubuntu-latest
+
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name:  docker login
+      - name: Docker Hub login
         uses: docker/login-action@v3.5.0
-        with:  
-            username: ${{ vars.DOCKERHUB_USERNAME }}
-            password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: ghcr login
-        uses: docker/login-action@v3.5.0 
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: GHCR login
+        uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
-          username: ${{github.repository_owner}} 
-          passowrd: ${{secrets.github_token}}
-      - name: build docker file
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
-            push: false 
-            tags: ${{vars.DOCKERHUB_USERNAME}}/solar-system/:${{github.workflow.sha}}
+          push: false
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
 
-      - name: test docker iamge
+      - name: Test Docker image
         run: |
-            docker images
-            docker run --name solar-system -d \
+          echo "Running Docker image..."
+          docker images
+          
+          docker run --name solar-system -d \
             -p 3000:3000 \
             -e MONGO_URI=$MONGO_URI \
             -e MONGO_USERNAME=$MONGO_USERNAME \
-            -e MONGO_PASSWORD+$MONGO_PASSWORD
-            ${{vars.DOCKERHUB_USERNAME}}/solar-system/:${{github.workflow.sha}}
-            export IP=$(docker inspect -f '{{raneg .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'solar-system)
-            echo $IP 
-            echo testing iamge
-            wget -q -O -127.0.0.1 :3000/live | grep live
+            -e MONGO_PASSWORD=$MONGO_PASSWORD \
+            ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+
+          echo "Waiting for the app to start..."
+          sleep 5
+
+          echo "Inspecting container IP..."
+          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' solar-system)
+          echo "Container IP: $IP"
+
+          echo "Testing image health endpoint..."
+          curl -s http://localhost:3000/live | grep live
+
