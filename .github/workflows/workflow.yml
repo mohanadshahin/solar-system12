@@ -1,11 +1,8 @@
-name: solar-system workflow
+name: pipeline 1 pr
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - feature-branch
-      - main
+  pull_request:
+    branches: [ main ]
 
 env:
   MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
@@ -13,119 +10,84 @@ env:
   MONGO_URI: ${{ vars.MONGO_URI }}
 
 jobs:
-  unit-testing:
-    name: Unit Testing
-    strategy:
-      matrix:
-        nodejs_version: [18, 19, 20]
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        exclude:
-          - nodejs_version: 18
-            os: macos-latest
 
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up Node.js version ${{ matrix.nodejs_version }}
-        uses: actions/setup-node@v4.4.0
-        with:
-          node-version: ${{ matrix.nodejs_version }}
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run unit tests
-        id: hamada
-        run: npm test
-
-      - name: Archive test results
-        if: always()
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: test-results
-          path: test-result.xml
-
-  code-coverage:
-    name: Code Coverage
-    continue-on-error: true
-    needs: unit-testing
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4.4.0
-        with:
-          node-version: 18
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run coverage
-        run: |
-           npm run coverage || echo "::warning ::Coverage below threshold. Continuing workflow."
-
-      - name: Archive coverage results
-        uses: actions/upload-artifact@v4.6.2
-        with:
-          name: code-coverage-result
-          path: coverage/
-          retention-days: 5
-
-  docker:
-    name: Containerization
-    needs: [unit-testing, code-coverage]
-    permissions:
-      packages: write
+  lint:
+    name: Lint Code
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v3
 
-      - name: Docker Hub login
-        uses: docker/login-action@v3.5.0
+      - name: Setup Node
+        uses: actions/setup-node@v3
         with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          node-version: 18
 
-      - name: GHCR login
-        uses: docker/login-action@v3.5.0
+      - name: Cache npm
+        uses: actions/cache@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Lint
+        run: npm run lint
+
+
+  test:
+    name: Unit Tests & Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
         with:
-          push: false
-          tags: ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+          node-version: 18
 
-      - name: Test Docker image
+      - name: Cache npm
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage
+
+      - name: Check Coverage
         run: |
-          echo "Running Docker image..."
-          docker images
-          
-          docker run --name solar-system -d \
-            -p 3000:3000 \
-            -e MONGO_URI=$MONGO_URI \
-            -e MONGO_USERNAME=$MONGO_USERNAME \
-            -e MONGO_PASSWORD=$MONGO_PASSWORD \
-            ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+          COVERAGE=$(grep -Po 'All files[^|]*\|[^|]*\s+\K\d+' coverage/lcov-report/index.html | head -1)
+          echo "Coverage is $COVERAGE%"
+          if [ "$COVERAGE" -lt "80" ]; then
+            echo "Coverage is below 80%"
+            exit 1
+          fi
 
-          echo "Waiting for the app to start..."
-          sleep 5
 
-          echo "Inspecting container IP..."
-          IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' solar-system)
-          echo "Container IP: $IP"
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
 
-          echo "Testing image health endpoint..."
-          curl -s http://localhost:3000/live | grep live
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
+      - name: Setup Node   
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies   
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
+g
