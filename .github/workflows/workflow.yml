@@ -1,228 +1,92 @@
-name: soalr system workflow
+name: pipeline 1 pr
 
 on:
-    workflow_dispatch:
-    push:
-       branches:
-            - feature-brancheA
-            - main
-      
-env: 
-    MONGO_URI: 'mongodb+srv://supercluster.d83jj.mongodb.net/superData'
-    MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
-    MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+  pull_request:
+    branches: [ main ]
 
+env:
+  MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+  MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
+  MONGO_URI: ${{ vars.MONGO_URI }}
 
 jobs:
-    unit-testing:
-        name: unit Testing
-        strategy:
-            matrix:
-                nodejs_version: [18, 19, 20]
-                os: [ubuntu-latest, macos-latest, windows-latest]
 
-                exclude:
-                    - nodejs_version: 18
-                      os: macos-latest
-        runs-on: ${{ matrix.os }}
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
 
-        steps:
-            - name: checkout Repo
-              uses: actions/checkout@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-            - name: Setup NodeJs version - ${{ matrix.nodejs_version }}
-              uses: actions/setup-node@v4.4.0
-              with:
-                node-version: ${{ matrix.nodejs_version }}
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
-            - name: Install dep
-              run: npm install
+      - name: Cache npm
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}
 
-            - name: unit testing
-              id: NodeJs-unit-testing-step
-              run: npm test
+      - name: Install dependencies
+        run: npm ci
 
-            - name: Archive test result
-              if: steps.NodeJs-unit-testing-step.outcome == 'failure' || steps.NodeJs-unit-testing-step.outcome == 'success'
-              uses: actions/upload-artifact@v4.6.2
-              with:
-                name: mocha-Test-Result-${{ matrix.nodejs_version }}-${{ matrix.os }}
-                path: test-results.xml
-
-    code-coverage:
-        name: code coverage
-        needs: unit-testing
-        runs-on: ubuntu-latest
-        steps:
-            - name: checkout Repo
-              uses: actions/checkout@v5
-
-            - name: Setup NodeJs version - 18
-              uses: actions/setup-node@v4.4.0
-              with:
-                node-version: 18
-            
-            - name: install depend.
-              run: npm install
+      - name: Run Lint
+        run: npm run lint
 
 
-            - name: check code coverage
-              continue-on-error: true
-              run: npm run coverage
+  test:
+    name: Unit Tests & Coverage
+    runs-on: ubuntu-latest
 
-            - name: archive coverage results
-              uses: actions/upload-artifact@v4.6.2
-              with:
-                name: code-coverage-Result
-                path: coverage
-                retention-days: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    docker:
-        name: containerization
-        needs: [code-coverage,unit-testing]
-        permissions:
-            contents: read
-            packages: write
-        runs-on: ubuntu-latest
-        steps:
-            - name: checkout
-              uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
-            - name: docker login
-              uses: docker/login-action@v3.5.0
-              with:
-                username: ${{ vars.DOCKERHUB_USERNAME }}
-                password: ${{ secrets.DOCKERHUB_PASSWORD }}
+      - name: Cache npm
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}
 
+      - name: Install dependencies
+        run: npm ci
 
-            - name: GHCR login
-              uses: docker/login-action@v3.5.0
-              with:
-                registry: ghcr.io
-                username: ${{github.repository_owner }}
-                password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage
 
-            - name: Build Docker file
-              uses: docker/build-push-action@v6
-              with:
-               context: .
-               push: false
-               tags: ${{ vars.DOCKERHUB_USERNAME }}/solar-system:latest
-
-            - name: Test Docker image
-              run: |
-                docker images
-                docker run --name solar-system-app -d \
-                -p 3000:3000 \
-                -e MONGO_URI=$MONGO_URI \
-                -e MONGO_USERNAME=$MONGO_USERNAME \
-                -e MONGO_PASSWORD=$MONGO_PASSWORD \
-                ${{ vars.DOCKERHUB_USERNAME }}/solar-system:latest
-                export IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' solar-system-app)
-                echo $IP
-
-                echo Testing Image URL using wget
-                wget -q -O - 127.0.0.1:3000/live | grep  live
+      - name: Check Coverage
+        run: |
+          COVERAGE=$(grep -Po 'All files[^|]*\|[^|]*\s+\K\d+' coverage/lcov-report/index.html | head -1)
+          echo "Coverage is $COVERAGE%"
+          if [ "$COVERAGE" -lt "80" ]; then
+            echo "Coverage is below 80%"
+            exit 1
+          fi
 
 
-            - name: Build Docker file
-              uses: docker/build-push-action@v6
-              with:
-               context: .
-               push: true
-               tags: |
-                ${{ vars.DOCKERHUB_USERNAME }}/solar-system:latest
-    terraform:
-        name: terraform deployment
-        needs: docker
-        runs-on: ubuntu-latest
-        environment: production
-        steps:
-            - name: checkout config files
-              uses: actions/checkout@v5
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
 
-            - name: Configure AWS Credentials
-              uses: aws-actions/configure-aws-credentials@v4.3.1
-              with:
-                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                  aws-region: us-west-2
-       
-            - name: HashiCorp - Setup Terraform
-              uses: hashicorp/setup-terraform@v3.1.2
-              with:
-                 terraform_version: "1.1.7"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-            - name: terraform init
-              run: terraform init
-              working-directory: ./Terraform
+      - name: Setup Node   
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
 
+      - name: Install dependencies   
+        run: npm ci
 
-            - name: terraform plan
-              run: terraform plan
-              working-directory: ./Terraform
-
-            - name: terraform apply or destroy
-              run: |
-                 if [ "${{ github.event.inputs.destroy }}" = "yes" ]; then
-                 terraform destroy -auto-approve
-                 else
-                  terraform apply -auto-approve
-                 fi
-              working-directory: ./Terraform
-
-    deploy:
-        needs: terraform
-        name: deploy to EKS
-        runs-on: ubuntu-latest
-
-        steps:
-            - name: checkout config files
-              uses: actions/checkout@v5
-
-
-            - name: Configure AWS Credentials
-              uses: aws-actions/configure-aws-credentials@v4.3.1
-              with:
-                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                  aws-region: us-west-2
-
-            - name: updat kubeconfig
-              run: | 
-                    aws eks --region us-west-2 update-kubeconfig --name stage-eks-cluster
-
-            - name: Trigger app deployment
-              uses: statsig-io/kubectl-via-eksctl@main
-              env:
-                 aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-                 aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-                 region: us-west-2
-                 cluster: stage-eks-cluster
-
-
-            - name: Deploy k8s deployments
-              run: |
-               kubectl apply -f deployment.yml
-               kubectl apply -f service.yml
-              working-directory: ./kubernetes
-
-            - name: Verify Deployment
-              run: |
-                kubectl get pods  
-                kubectl get svc
-
-            
-
-
-
-
-
-
-
-
-            
-
-
-
-    
+      - name: Run npm audit
+        run: npm audit --audit-level=high
